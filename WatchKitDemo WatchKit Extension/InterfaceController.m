@@ -9,36 +9,42 @@
 #import "InterfaceController.h"
 #import "ItemListRowController.h"
 
-@interface InterfaceController()
+@interface InterfaceController()<NSFilePresenter>
 @property (nonatomic, weak) IBOutlet WKInterfaceTable *table;
-@property (nonatomic, strong) NSUserDefaults *defaults;
+@property (nonatomic, strong) NSFileCoordinator *fileCoordinator;
 @property (nonatomic, strong) NSArray *list;
 @end
 
 
 @implementation InterfaceController
 
-- (NSUserDefaults *)defaults {
-    if (_defaults == nil) {
-        _defaults = [[NSUserDefaults alloc] initWithSuiteName:@"group.com.rambler.demo.shared"];
+- (NSFileCoordinator *)fileCoordinator {
+    if (_fileCoordinator == nil) {
+        _fileCoordinator = [[NSFileCoordinator alloc] init];
     }
     
-    return _defaults;
+    return _fileCoordinator;
 }
 
 - (void)awakeWithContext:(id)context {
     [super awakeWithContext:context];
-    
-    [self loadList];
+    [NSFileCoordinator addFilePresenter:self];
 }
 
 - (void)loadList {
-    [self.defaults synchronize];
-    self.list = [self.defaults objectForKey:@"list"];
-    [self updateListView];
+    [self.fileCoordinator
+     coordinateReadingItemAtURL:[self presentedItemURL]
+     options:NSFileCoordinatorReadingWithoutChanges
+     error:nil
+     byAccessor:^(NSURL *newURL) {
+         NSData *data = [NSData dataWithContentsOfURL:newURL];
+         id object = [NSKeyedUnarchiver unarchiveObjectWithData:data];
+         self.list = object != nil ? [NSMutableArray arrayWithArray:object] : [@[] mutableCopy];
+         [self populateListView];
+     }];
 }
 
-- (void)updateListView {
+- (void)populateListView {
     if (self.table.numberOfRows) {
         [self.table removeRowsAtIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, self.table.numberOfRows)]];
     }
@@ -53,8 +59,27 @@
     }
 }
 
+- (void)updateListView:(NSArray *)newList {
+    NSIndexSet *newItemsIndexSet = [newList indexesOfObjectsPassingTest:^BOOL(id obj, NSUInteger idx, BOOL *stop) {
+        return ![self.list containsObject:obj];
+    }];
+    NSIndexSet *removedItemsIndexSet = [self.list indexesOfObjectsPassingTest:^BOOL(id obj, NSUInteger idx, BOOL *stop) {
+        return ![newList containsObject:obj];
+    }];
+    
+    [self.table removeRowsAtIndexes:removedItemsIndexSet];
+    
+    for (id newItem in [newList objectsAtIndexes:newItemsIndexSet]) {
+        [self.table insertRowsAtIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(self.table.numberOfRows, 1)]
+                            withRowType:@"ItemListRowControllerId"];
+        ItemListRowController *rowController = [self.table rowControllerAtIndex:self.table.numberOfRows - 1];
+        [rowController.label setText:newItem];
+    }
+}
+
 - (void)willActivate {
     [super willActivate];
+    [self loadList];
 }
 
 - (void)didDeactivate {
@@ -63,6 +88,32 @@
 
 - (IBAction)refresh:(id)sender {
     [self loadList];
+}
+
+#pragma mark NSFilePresenter impl
+
+- (NSURL *)presentedItemURL {
+    NSURL *containerURL =
+    [[NSFileManager defaultManager] containerURLForSecurityApplicationGroupIdentifier:@"group.com.rambler.demo.shared"];
+    return [containerURL URLByAppendingPathComponent:@"list"];
+}
+
+- (NSOperationQueue *)presentedItemOperationQueue {
+    return [NSOperationQueue mainQueue];
+}
+
+- (void)presentedItemDidChange {
+    [self.fileCoordinator
+     coordinateReadingItemAtURL:[self presentedItemURL]
+     options:NSFileCoordinatorReadingWithoutChanges
+     error:nil
+     byAccessor:^(NSURL *newURL) {
+         NSData *data = [NSData dataWithContentsOfURL:newURL];
+         id object = [NSKeyedUnarchiver unarchiveObjectWithData:data];
+         NSArray *newItems = [NSMutableArray arrayWithArray:object];
+         [self updateListView:newItems];
+         self.list = newItems;
+     }];
 }
 
 @end

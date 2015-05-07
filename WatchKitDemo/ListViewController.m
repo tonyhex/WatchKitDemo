@@ -8,28 +8,37 @@
 
 #import "ListViewController.h"
 
-@interface ListViewController ()
+@interface ListViewController ()<NSFilePresenter>
 
 @property (nonatomic, weak) IBOutlet UIBarButtonItem *addBarButton;
 @property (nonatomic, weak) IBOutlet UIBarButtonItem *removeBarButton;
-@property (nonatomic, strong) NSUserDefaults *defaults;
+@property (nonatomic, strong) NSFileCoordinator *fileCoordinator;
 @property (nonatomic, strong) NSMutableArray *list;
 
 @end
 
 @implementation ListViewController
 
-- (NSUserDefaults *)defaults {
-    if (_defaults == nil) {
-        _defaults = [[NSUserDefaults alloc] initWithSuiteName:@"group.com.rambler.demo.shared"];
+- (NSFileCoordinator *)fileCoordinator {
+    if (_fileCoordinator == nil) {
+        _fileCoordinator = [[NSFileCoordinator alloc] init];
     }
     
-    return _defaults;
+    return _fileCoordinator;
 }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.list = [self.defaults objectForKey:@"list"] ? : [@[] mutableCopy];
+    [self.fileCoordinator
+     coordinateReadingItemAtURL:[self presentedItemURL]
+     options:NSFileCoordinatorReadingWithoutChanges
+     error:nil
+     byAccessor:^(NSURL *newURL) {
+         NSData *data = [NSData dataWithContentsOfURL:newURL];
+         id object = [NSKeyedUnarchiver unarchiveObjectWithData:data];
+         self.list = object != nil ? [NSMutableArray arrayWithArray:object] : [@[] mutableCopy];
+         [self.tableView reloadData];
+    }];
 }
 
 - (void)didReceiveMemoryWarning {
@@ -58,12 +67,26 @@
 
 #pragma mark List actions
 
+- (void)saveListWithCompletion:(void (^)(void))completion {
+    [self.fileCoordinator
+     coordinateWritingItemAtURL:[self presentedItemURL]
+     options:NSFileCoordinatorWritingForReplacing
+     error:nil
+     byAccessor:^(NSURL *newURL) {
+         NSData *data = [NSKeyedArchiver archivedDataWithRootObject:self.list];
+         [data writeToURL:newURL atomically:YES];
+         if (completion != nil) {
+             completion();
+         }
+    }];
+}
+
 - (void)addListItem:(id)listItem {
     [self.list addObject:listItem];
-    [self.tableView insertRowsAtIndexPaths:@[[NSIndexPath indexPathForRow:self.list.count - 1 inSection:0]]
-                          withRowAnimation:UITableViewRowAnimationAutomatic];
-    [self.defaults setObject:self.list forKey:@"list"];
-    [self.defaults synchronize];
+    [self saveListWithCompletion:^{
+        [self.tableView insertRowsAtIndexPaths:@[[NSIndexPath indexPathForRow:self.list.count - 1 inSection:0]]
+                              withRowAnimation:UITableViewRowAnimationAutomatic];
+    }];
 }
 
 - (void)removeLastListItem {
@@ -71,10 +94,22 @@
         return;
     }
     [self.list removeLastObject];
-    [self.tableView deleteRowsAtIndexPaths:@[[NSIndexPath indexPathForRow:self.list.count inSection:0]]
-                          withRowAnimation:UITableViewRowAnimationAutomatic];
-    [self.defaults setObject:self.list forKey:@"list"];
-    [self.defaults synchronize];
+    [self saveListWithCompletion:^{
+        [self.tableView deleteRowsAtIndexPaths:@[[NSIndexPath indexPathForRow:self.list.count inSection:0]]
+                              withRowAnimation:UITableViewRowAnimationAutomatic];
+    }];
+}
+
+#pragma mark NSFilePresenter impl
+
+- (NSURL *)presentedItemURL {
+    NSURL *containerURL =
+        [[NSFileManager defaultManager] containerURLForSecurityApplicationGroupIdentifier:@"group.com.rambler.demo.shared"];
+    return [containerURL URLByAppendingPathComponent:@"list"];
+}
+
+- (NSOperationQueue *)presentedItemOperationQueue {
+    return [NSOperationQueue mainQueue];
 }
 
 @end
