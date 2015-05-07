@@ -28,8 +28,6 @@
 
 - (void)awakeWithContext:(id)context {
     [super awakeWithContext:context];
-    
-    [self loadList];
 }
 
 - (void)loadList {
@@ -55,6 +53,7 @@
 
 - (void)willActivate {
     [super willActivate];
+    [self loadList];
 }
 
 - (void)didDeactivate {
